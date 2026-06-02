@@ -1,0 +1,20 @@
+# torrent_search.py — requirements
+# Install with: pip install -r requirements.txt
+#
+# Browser: the tool uses your system Google Chrome or Microsoft Edge if present;
+# otherwise run  playwright install chromium  to get Playwright's bundled browser.
+#
+# DHT peer + metadata resolution (BEP5/BEP9 — the default 'auto'/'dht' methods)
+# uses only the Python standard library; no extra packages needed.
+
+# Core
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+openpyxl>=3.1.2
+playwright>=1.44.0
+
+# Optional: WebSocket tracker scrape (only for the 'wss' fallback method)
+# websocket-client>=1.6.0
+
+# Optional: .torrent file parsing (better than built-in bencode)
+# torf>=4.2.4
