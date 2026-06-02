@@ -1,129 +1,165 @@
-# Torrent Search Tool
+# torrent_search.py v2
 
-`torrent_search.py` is a Python script that allows you to search for torrents on The Pirate Bay (using the `apibay.org` API) with keywords defined in a text file. The results are saved in an SQLite database and also exported to a CSV file for further analysis and reference.
+A command-line tool for finding torrents via **BTDig**, then resolving live peers and full file listings straight from the **BitTorrent DHT** (Kademlia), with multi-sheet XLSX export.
 
-## Features
+This is a major rewrite of the original v1 script. It replaces the APIBay flow with real browser automation against BTDig, queries the DHT directly (BEP5 peers + BEP9 metadata), and falls back to UDP/WSS trackers and public `.torrent` caches.
 
-- **Torrent search by keyword**: Input keywords in a text file, and the script will search for related torrents.
-- **SQLite database**: Search results are stored in an SQLite database for later queries.
-- **CSV export**: The search results are also exported to a CSV file with well-formatted column names.
-- **Torrent details retrieval**: The script fetches additional details for each torrent, such as age, size, included files, and magnet links.
-- **Support for multiple categories**: The tool classifies torrents into different categories, such as movies, applications, games, music, and more.
+---
+
+## What's new in v2
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| Search source | APIBay API | BTDig via Playwright/Chromium |
+| Peer count | None | DHT (Kademlia, BEP5) + UDP/WSS tracker fallback |
+| File listing | None | Full list via DHT/BEP9 metadata — beyond BTDig's partial excerpt |
+| Output | CSV (pipe-delimited) | XLSX (2 sheets) + SQLite |
+| Resume / checkpoint | No | Yes (`--resume`) |
+| Download `.torrent` | No | Optional (`--download`) |
+| File inventory | No | Yes (from torrent file or page excerpt) |
+| Error recovery | Basic | Network retries + clean Ctrl+C resume |
+
+---
 
 ## Requirements
 
-- Python 3.6 or higher
-- Additional packages:
-  - `requests`
-  - `beautifulsoup4`
-  - `pytz`
-  - `sqlite3` (included in Python’s standard library)
-  - `csv`
-  - `argparse`
-  - `logging`
-  - `subprocess`
-
-You can install the additional dependencies by running:
-
-```bash
-pip3 install requests beautifulsoup4 pytz
+```
+Python 3.11+
+pip install requests beautifulsoup4 openpyxl playwright
 ```
 
-## Usage Instructions
+The tool drives a Chromium-based browser. It uses your **system Google Chrome or
+Microsoft Edge** if installed; otherwise download Playwright's bundled Chromium:
 
-1. **Prepare a keyword file**:
-   Create a text file where each line contains a keyword to search for on The Pirate Bay. Example:
+```
+playwright install chromium
+```
 
-   ```txt
-   movie
-   software
-   music
-   ```
+Optional extras:
 
-2. **Run the script**:
-   To run the script, use the following command in the terminal:
+```
+pip install websocket-client   # WebSocket peer scraping (WSS)
+pip install torf               # Better .torrent file parsing
+```
 
-   ```bash
-   python3 torrent_search.py keywords.txt
-   ```
+---
 
-   Where `keywords.txt` is the text file with the keywords. The script will search for the keywords, store the results in the `torrents.db` database, and export the results to a CSV file.
+## Quick start
 
-3. **Script options**:
-   The script supports the following options:
+```bash
+# 1. Install dependencies
+pip install -r requirements.txt
+# (optional — only if you don't already have Chrome or Edge installed)
+playwright install chromium
 
-   ```bash
-   python3 torrent_search.py -h
-   ```
+# 2. Create a keyword file (one term per line)
+echo "python programming" > my_keywords.txt
 
-   **Options**:
-   - `-h, --help`: Displays the help message.
-   - `file`: Text file with keywords for the search.
+# 3. Run
+python torrent_search.py my_keywords.txt
+```
 
-4. **File structure**:
-   - **SQLite database (`torrents.db`)**: Stores the details of the torrents, including:
-     - `id`: Unique torrent ID.
-     - `name`: Torrent name.
-     - `info_hash`: Torrent hash.
-     - `leechers`: Number of leechers.
-     - `seeders`: Number of seeders.
-     - `num_files`: Number of files included in the torrent.
-     - `size`: Torrent size.
-     - `username`: Username of the uploader.
-     - `added`: Addition date (Unix timestamp).
-     - `added_utc`: Addition date in UTC format.
-     - `status`: Torrent status (e.g., `vip`, `trusted`).
-     - `category`: Category code.
-     - `category_name`: Category name (e.g., Movies, Software).
-     - `imdb`: IMDb ID, if available.
-     - `torrent_age`: Torrent age.
-     - `details`: List of files included in the torrent.
-     - `magnet_link`: Magnet link.
+Output:
+- `torrents.db` — SQLite database with all results
+- `YYYY-MM-DD_Results.xlsx` — 2-sheet spreadsheet (Results / Torrent_Contents)
+- `magnets/` — `.magnet` files
+- `torrents_downloaded/` — `.torrent` files (with `--download`)
 
-   - **CSV**: Exports the search results to a CSV file in the format:
+---
 
-     ```csv
-     id|name|info_hash|leechers|seeders|num_files|size|username|added|added_utc|status|category|category_name|imdb|torrent_age|details|magnet_link
-     ```
+## Usage
 
-## Usage Examples
+```
+python torrent_search.py keywords.txt [more.txt ...] [options]
 
-1. **Search for torrents using keywords from a file**:
+Positional:
+  files                  Keyword files (UTF-8, one term per line, # for comments)
 
-   ```bash
-   python3 torrent_search.py keywords.txt
-   ```
+Options:
+  --btdig-pages N          BTDig pages per keyword, 10 results/page (default: 15)
+  --delay-btdig N          Seconds between pages (default: 1.5)
+  --delay-btdig-keyword N  Pause between keywords in seconds (default: 3.0)
+  --download               Download .torrent for each result
+  --scrape-method          auto|dht|udp|wss|none  (default: auto)
+  --scrape-timeout N       Peer scrape timeout in seconds (default: 5.0)
+  --resume                 Continue from last checkpoint
+  --reset-checkpoint       Delete checkpoint, reprocess everything
+  --browser-visible        Show Chromium window (debug)
+```
 
-   Output:
+### Scrape methods
 
-   ```bash
-   The folder Torrents already exists
-   Processing keyword 'pistol'...
-   [...]
-   100 results saved in the torrents.db database
-   Results have been exported to a CSV file called 2024-09-27_Results.csv
-   ```
+| Method | What it does |
+|--------|--------------|
+| `auto` | **DHT first** (real peers via BEP5), then UDP→WSS tracker fallback — default |
+| `dht`  | DHT only: BEP5 peers + **full file list via BEP9 metadata** (no tracker/cache needed) |
+| `udp`  | UDP tracker scrape (BEP 15) only |
+| `wss`  | WebSocket tracker (WSS, port 443) only |
+| `none` | No peer lookup (fastest) |
 
-2. **Query the SQLite database**:
+The DHT path is pure-Python (no extra dependencies) and queries the swarm directly,
+so it finds far more live peers than trackers and reconstructs the real file list
+from peers even when no public cache has the `.torrent`.
 
-   ```bash
-   sqlite3 torrents.db
-   sqlite> SELECT * FROM torrents LIMIT 3;
-   ```
+---
 
-   Example output:
+## Database schema
 
-   ```txt
-   74591101|DungeonSex - Kink - Sophia Locke - Deep Connection, Sophia and Tommy Pistol 720p|8F600F390F079F16E0B4E49E133CA28854710CA3|3|12|1|2781502161|Yurievij|1707652679|2024-02-11 11:57:59|vip|505|HD - Movies||7 months||magnet:?xt=urn:btih:8f600f390f079f16e0b4e49e133ca28854710ca3&dn=DungeonSex+-+Deep+Connection+-+Sophia+Locke+and+Tommy+Pistol,+Feb+9,+2024_720p.mp4&tr=udp://tracker.openbittorrent.com:80&tr=udp://tracker.opentrackr.org:1337/announce
-   ```
+```sql
+-- Main results
+CREATE TABLE torrents (
+    info_hash     TEXT PRIMARY KEY,
+    name          TEXT,
+    seeders       INTEGER,
+    leechers      INTEGER,
+    size_bytes    TEXT,
+    num_files     TEXT,
+    category      TEXT,          -- reserved (currently 'Unknown')
+    source        TEXT,          -- always 'BTDig'
+    keyword       TEXT,
+    added_utc     TEXT,
+    magnet        TEXT,
+    torrent_file  TEXT,          -- local path if --download used
+    captured_at   TEXT,
+    detail_url    TEXT,
+    scrape_method TEXT           -- 'dht' / 'udp' / 'wss' / null
+);
 
-## Log
+-- File inventory (populated from .torrent or page excerpt)
+CREATE TABLE torrent_contents (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    info_hash  TEXT NOT NULL,
+    file_path  TEXT,
+    file_size  INTEGER
+);
+```
 
-The script generates a detailed log of the operations performed, useful for debugging or reviewing program behavior. It uses `DEBUG` level by default, meaning it includes detailed debugging messages.
+---
 
-## Contributions
+## Files generated
 
-Contributions are welcome. If you have suggestions, bugs to report, or improvements to make, feel free to open an `issue` or submit a `pull request`.
+```
+.
+├── torrents.db                  # SQLite results database
+├── btdig_checkpoint.json        # Resume checkpoint
+├── YYYY-MM-DD_Results.xlsx      # Spreadsheet export (2 sheets)
+├── torrent_search_debug.log     # Debug log
+├── magnets/                     # .magnet files
+└── torrents_downloaded/         # .torrent files (with --download)
+```
+
+---
+
+## Notes
+
+- **DHT** (`auto` / `dht`): queries the BitTorrent DHT (Kademlia, BEP5) directly for live peers, and pulls the real name + full file list from peers via BEP9 metadata — pure Python, no extra dependencies. `auto` tries the DHT first, then falls back to UDP/WSS trackers. A truly dead torrent (0 live peers) still yields nothing — its metadata lives on no peer.
+- **Browser**: the tool tries system Chrome → system Edge → Playwright's bundled Chromium, in that order. `--browser-visible` shows the window (debug) with whichever launches.
+- **BTDig** is a public DHT search engine. No API key required.
+- **`--download`** also fetches the `.torrent` from public caches (itorrents.org is the only consistently working one as of 2026). In `dht`/`auto` the full file list comes from BEP9 metadata first, so a successful DHT lookup no longer depends on the caches. SSL verification is disabled for cache fetches (self-signed certs are common).
+- The checkpoint file records which keywords have been processed — safe to interrupt with Ctrl+C and resume with `--resume`.
+- Non-ASCII search terms (e.g. Arabic, Chinese) are sent unquoted; ASCII terms are wrapped in quotes for exact matching.
+
+---
 
 ## License
 
